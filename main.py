@@ -129,9 +129,13 @@ async def get_range(period: str):
 
 @app.get("/test")
 async def test(authorization: str = Header(None)):
-    if authorization and authorization.startswith(f"Bearer {HR_API_TOKEN}"):
-        return {"status": "ok", "token_valid": True}
-    return {"status": "ok", "token_valid": False, "message": "Token missing or invalid"}
+    return {
+        "status": "ok",
+        "token_valid": authorization == f"Bearer {HR_API_TOKEN}",
+        "received": authorization,
+        "expected": f"Bearer {HR_API_TOKEN}",
+        "token_set": bool(HR_API_TOKEN and HR_API_TOKEN != "change-me")
+    }
 
 
 @app.get("/stream")
