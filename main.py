@@ -73,8 +73,9 @@ sse_lock = threading.Lock()
 
 @app.post("/")
 async def ingest(data: HrmInput, authorization: str = Header(None)):
-    if not authorization or not authorization.startswith(f"Bearer {HR_API_TOKEN}"):
-        raise HTTPException(status_code=401, detail="Invalid or missing token. Include 'Authorization: Bearer YOUR_TOKEN' header.")
+    # Auth temporarily disabled for testing
+    # if not authorization or not authorization.startswith(f"Bearer {HR_API_TOKEN}"):
+    #     raise HTTPException(status_code=401, detail="Invalid or missing token")
 
     timestamp = data.timestamp or datetime.now(timezone.utc).isoformat()
 
