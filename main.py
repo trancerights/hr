@@ -73,8 +73,8 @@ sse_lock = threading.Lock()
 
 @app.post("/")
 async def ingest(data: HrmInput, authorization: str = Header(None)):
-    # if authorization != f"Bearer {HR_API_TOKEN}":
-    #     raise HTTPException(status_code=401, detail="Invalid token")
+    if not authorization or not authorization.startswith(f"Bearer {HR_API_TOKEN}"):
+        raise HTTPException(status_code=401, detail="Invalid or missing token. Include 'Authorization: Bearer YOUR_TOKEN' header.")
 
     timestamp = data.timestamp or datetime.now(timezone.utc).isoformat()
 
@@ -125,6 +125,13 @@ async def get_range(period: str):
         {"bpm": r[0], "hrv_rmssd": r[1], "steps": r[2], "timestamp": r[3]}
         for r in rows
     ]
+
+
+@app.get("/test")
+async def test(authorization: str = Header(None)):
+    if authorization and authorization.startswith(f"Bearer {HR_API_TOKEN}"):
+        return {"status": "ok", "token_valid": True}
+    return {"status": "ok", "token_valid": False, "message": "Token missing or invalid"}
 
 
 @app.get("/stream")
