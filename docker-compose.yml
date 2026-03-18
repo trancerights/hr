@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  hr-api:
+    build: .
+    ports:
+      - "5000:8000"
+    environment:
+      - HR_API_TOKEN=${HR_API_TOKEN}
+      - DB_PATH=/data/hr.db
+    volumes:
+      - hr_data:/data
+
+volumes:
+  hr_data:
