@@ -84,8 +84,10 @@ def get_response_data() -> dict:
         "SELECT bpm, hrv, timestamp FROM hrm_data ORDER BY id DESC LIMIT 1"
     )
     row = cur.fetchone()
+    count = conn.execute("SELECT COUNT(*) FROM hrm_data").fetchone()[0]
+
     if not row:
-        return {"bpm": None, "hrv": None, "timestamp": None, "stale": True}
+        return {"bpm": None, "hrv": None, "timestamp": None, "count": count, "stale": True}
 
     bpm, hrv, timestamp = row
     dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
@@ -95,6 +97,7 @@ def get_response_data() -> dict:
         "bpm": bpm,
         "hrv": hrv,
         "timestamp": timestamp,
+        "count": count,
         "stale": stale,
     }
 
@@ -174,12 +177,11 @@ async def get_range(period: str):
 
 
 @app.get("/test")
-async def test(authorization: str = Header(None)):
+async def test(authorization: str = Header(None), x_api_key: str = Header(None)):
+    valid = (x_api_key and x_api_key == HR_API_TOKEN) or (authorization and authorization == f"Bearer {HR_API_TOKEN}")
     return {
         "status": "ok",
-        "token_valid": authorization == f"Bearer {HR_API_TOKEN}",
-        "received": authorization,
-        "expected": f"Bearer {HR_API_TOKEN}",
+        "token_valid": valid,
         "token_set": bool(HR_API_TOKEN and HR_API_TOKEN != "change-me")
     }
 
