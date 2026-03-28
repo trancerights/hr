@@ -3,6 +3,7 @@ import sqlite3
 import json
 import math
 import threading
+from collections import deque
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -14,6 +15,7 @@ app = FastAPI()
 
 DB_PATH = os.environ.get("DB_PATH", "hr.db")
 HR_API_TOKEN = os.environ.get("HR_API_TOKEN", "change-me")
+HRV_WINDOW = int(os.environ.get("HRV_WINDOW", "20"))
 
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 conn.execute("""
@@ -21,13 +23,12 @@ conn.execute("""
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         bpm INTEGER,
         hrv REAL,
-        steps INTEGER,
         timestamp TEXT NOT NULL
     )
 """)
 conn.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON hrm_data(timestamp)")
 
-# Migrate old column name if needed
+# Migrate old schemas if needed
 try:
     conn.execute("ALTER TABLE hrm_data RENAME COLUMN hrv_rmssd TO hrv")
 except Exception:
@@ -39,7 +40,6 @@ conn.commit()
 class HrmInput(BaseModel):
     bpm: int
     hrv: float | None = None
-    steps: int | None = None
     timestamp: str | None = None
 
 
@@ -61,32 +61,31 @@ def compute_rmssd(rr_intervals: list[int]) -> float | None:
     return round(math.sqrt(mean_sq), 2)
 
 
-def compute_stress(rmssd: float | None) -> str:
-    if rmssd is None:
-        return "unknown"
-    if rmssd > 50:
-        return "low"
-    if rmssd >= 30:
-        return "median"
-    return "high"
+rr_buffer: deque[list[int]] = deque(maxlen=HRV_WINDOW)
+
+
+def rolling_hrv(rr_intervals: list[int] | None) -> float | None:
+    if rr_intervals:
+        rr_buffer.append(rr_intervals)
+    all_rr = [val for sample in rr_buffer for val in sample]
+    return compute_rmssd(all_rr)
 
 
 def get_response_data() -> dict:
     cur = conn.execute(
-        "SELECT bpm, hrv, steps, timestamp FROM hrm_data ORDER BY id DESC LIMIT 1"
+        "SELECT bpm, hrv, timestamp FROM hrm_data ORDER BY id DESC LIMIT 1"
     )
     row = cur.fetchone()
     if not row:
-        return {"bpm": None, "hrv": None, "steps": None, "timestamp": None, "stale": True}
+        return {"bpm": None, "hrv": None, "timestamp": None, "stale": True}
 
-    bpm, hrv, steps, timestamp = row
+    bpm, hrv, timestamp = row
     dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
     stale = datetime.now(timezone.utc) - dt > timedelta(minutes=10)
 
     return {
         "bpm": bpm,
         "hrv": hrv,
-        "steps": steps,
         "timestamp": timestamp,
         "stale": stale,
     }
@@ -96,10 +95,10 @@ sse_clients = []
 sse_lock = threading.Lock()
 
 
-def _store_and_broadcast(bpm: int, hrv: float | None, steps: int | None, timestamp: str):
+def _store_and_broadcast(bpm: int, hrv: float | None, timestamp: str):
     conn.execute(
-        "INSERT INTO hrm_data (bpm, hrv, steps, timestamp) VALUES (?, ?, ?, ?)",
-        (bpm, hrv, steps, timestamp)
+        "INSERT INTO hrm_data (bpm, hrv, timestamp) VALUES (?, ?, ?)",
+        (bpm, hrv, timestamp)
     )
     conn.commit()
 
@@ -121,18 +120,18 @@ def _store_and_broadcast(bpm: int, hrv: float | None, steps: int | None, timesta
 @app.post("/")
 async def ingest(data: HrmInput, authorization: str = Header(None)):
     timestamp = data.timestamp or datetime.now(timezone.utc).isoformat()
-    _store_and_broadcast(data.bpm, data.hrv, data.steps, timestamp)
+    _store_and_broadcast(data.bpm, data.hrv, timestamp)
     return {"ok": True}
 
 
 @app.post("/log.php")
 async def ingest_android(data: AndroidHrmInput, x_api_key: str = Header(None)):
-    hrv = compute_rmssd(data.rr_intervals) if data.rr_intervals else None
+    hrv = rolling_hrv(data.rr_intervals)
     if data.recorded_at:
         timestamp = datetime.fromtimestamp(data.recorded_at / 1000, tz=timezone.utc).isoformat()
     else:
         timestamp = datetime.now(timezone.utc).isoformat()
-    _store_and_broadcast(data.heart_rate, hrv, None, timestamp)
+    _store_and_broadcast(data.heart_rate, hrv, timestamp)
     return {"ok": True}
 
 
@@ -154,12 +153,12 @@ async def get_range(period: str):
         raise HTTPException(status_code=400, detail="Invalid period")
 
     cur = conn.execute(
-        "SELECT bpm, hrv, steps, timestamp FROM hrm_data WHERE timestamp >= ? ORDER BY id",
+        "SELECT bpm, hrv, timestamp FROM hrm_data WHERE timestamp >= ? ORDER BY id",
         (start.isoformat(),)
     )
     rows = cur.fetchall()
     return [
-        {"bpm": r[0], "hrv": r[1], "steps": r[2], "timestamp": r[3]}
+        {"bpm": r[0], "hrv": r[1], "timestamp": r[2]}
         for r in rows
     ]
 
