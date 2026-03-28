@@ -71,6 +71,14 @@ def rolling_hrv(rr_intervals: list[int] | None) -> float | None:
     return compute_rmssd(all_rr)
 
 
+def require_auth(authorization: str | None = None, x_api_key: str | None = None):
+    if x_api_key and x_api_key == HR_API_TOKEN:
+        return
+    if authorization and authorization == f"Bearer {HR_API_TOKEN}":
+        return
+    raise HTTPException(status_code=401, detail="Invalid or missing token")
+
+
 def get_response_data() -> dict:
     cur = conn.execute(
         "SELECT bpm, hrv, timestamp FROM hrm_data ORDER BY id DESC LIMIT 1"
@@ -81,7 +89,7 @@ def get_response_data() -> dict:
 
     bpm, hrv, timestamp = row
     dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-    stale = datetime.now(timezone.utc) - dt > timedelta(minutes=10)
+    stale = datetime.now(timezone.utc) - dt > timedelta(seconds=10)
 
     return {
         "bpm": bpm,
@@ -118,14 +126,16 @@ def _store_and_broadcast(bpm: int, hrv: float | None, timestamp: str):
 
 
 @app.post("/")
-async def ingest(data: HrmInput, authorization: str = Header(None)):
+async def ingest(data: HrmInput, authorization: str = Header(None), x_api_key: str = Header(None)):
+    require_auth(authorization, x_api_key)
     timestamp = data.timestamp or datetime.now(timezone.utc).isoformat()
     _store_and_broadcast(data.bpm, data.hrv, timestamp)
     return {"ok": True}
 
 
 @app.post("/log.php")
-async def ingest_android(data: AndroidHrmInput, x_api_key: str = Header(None)):
+async def ingest_android(data: AndroidHrmInput, authorization: str = Header(None), x_api_key: str = Header(None)):
+    require_auth(authorization, x_api_key)
     hrv = rolling_hrv(data.rr_intervals)
     if data.recorded_at:
         timestamp = datetime.fromtimestamp(data.recorded_at / 1000, tz=timezone.utc).isoformat()
